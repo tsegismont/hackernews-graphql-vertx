@@ -57,11 +57,6 @@ public class Server extends AbstractVerticle {
       });
   }
 
-  private void handleGraphQLSync(RoutingContext rc) {
-    Map<String, Object> result = graphQL.execute(ExecutionInput.newExecutionInput().query("{hello}").build()).toSpecification();
-    rc.response().end(new JsonObject(result).toBuffer());
-  }
-
   private void handleGraphQL(RoutingContext rc) {
     JsonObject body = new JsonObject(rc.getBody());
     String query = body.getString("query");
