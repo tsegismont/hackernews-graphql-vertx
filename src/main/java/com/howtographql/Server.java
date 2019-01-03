@@ -27,6 +27,7 @@ public class Server extends AbstractVerticle {
 
   private MongoClient mongoClient;
   private LinkRepository linkRepository;
+  private UserRepository userRepository;
   private GraphQL graphQL;
 
   @Override
@@ -34,6 +35,7 @@ public class Server extends AbstractVerticle {
 
     mongoClient = MongoClient.createShared(vertx, new JsonObject());
     linkRepository = new LinkRepository(mongoClient);
+    userRepository = new UserRepository(mongoClient);
 
     String schema = vertx.fileSystem().readFileBlocking("schema.graphqls").toString();
 
@@ -42,7 +44,10 @@ public class Server extends AbstractVerticle {
 
     RuntimeWiring runtimeWiring = newRuntimeWiring()
       .type("Query", builder -> builder.dataFetcher("allLinks", this::getAllLinks))
-      .type("Mutation", builder -> builder.dataFetcher("createLink", this::createLink))
+      .type("Mutation", builder -> {
+        return builder.dataFetcher("createLink", this::createLink)
+          .dataFetcher("createUser", this::createUser);
+      })
       .build();
 
     SchemaGenerator schemaGenerator = new SchemaGenerator();
@@ -71,6 +76,13 @@ public class Server extends AbstractVerticle {
     CompletableFuture<Link> cf = new CompletableFuture<>();
     Link link = new Link(env.getArgument("url"), env.getArgument("description"));
     linkRepository.saveLink(link, toHandler(cf));
+    return cf;
+  }
+
+  private CompletableFuture<User> createUser(DataFetchingEnvironment env) {
+    CompletableFuture<User> cf = new CompletableFuture<>();
+    User user = new User(env.getArgument("name"), env.getArgument("email"), env.getArgument("password"));
+    userRepository.saveUser(user, toHandler(cf));
     return cf;
   }
 
