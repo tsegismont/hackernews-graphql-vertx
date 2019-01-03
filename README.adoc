@@ -1,0 +1,5 @@
+This repo is an experiment with GraphQL and Vert.x.
+
+It is cloned from the https://www.howtographql.com/graphql-java/0-introduction/[graphql-java Tutorial] application.
+
+The license from their repository is copied link:LICENSE.txt[here].
