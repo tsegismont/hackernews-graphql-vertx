@@ -37,6 +37,7 @@ public class Server extends AbstractVerticle {
 
     RuntimeWiring runtimeWiring = newRuntimeWiring()
       .type("Query", builder -> builder.dataFetcher("allLinks", this::getAllLinks))
+      .type("Mutation", builder -> builder.dataFetcher("createLink", this::createLink))
       .build();
 
     SchemaGenerator schemaGenerator = new SchemaGenerator();
@@ -59,6 +60,14 @@ public class Server extends AbstractVerticle {
           ar.cause().printStackTrace();
         }
       });
+  }
+
+  private CompletableFuture<Link> createLink(DataFetchingEnvironment env) {
+    CompletableFuture<Link> cf = new CompletableFuture<>();
+    Link link = new Link(env.getArgument("url"), env.getArgument("description"));
+    linkRepository.saveLink(link);
+    cf.complete(link);
+    return cf;
   }
 
   private CompletableFuture<List<Link>> getAllLinks(DataFetchingEnvironment env) {
