@@ -1,24 +1,48 @@
 package com.howtographql;
 
-import java.util.ArrayList;
+import io.vertx.core.AsyncResult;
+import io.vertx.core.Future;
+import io.vertx.core.Handler;
+import io.vertx.core.json.JsonObject;
+import io.vertx.ext.mongo.MongoClient;
+import org.bson.types.ObjectId;
+
 import java.util.List;
+
+import static java.util.stream.Collectors.toList;
 
 public class LinkRepository {
 
-  private final List<Link> links;
+  private final MongoClient mongoClient;
 
-  public LinkRepository() {
-    links = new ArrayList<>();
-    //add some links to start off with
-    links.add(new Link("http://howtographql.com", "Your favorite GraphQL page"));
-    links.add(new Link("http://graphql.org/learn/", "The official docks"));
+  public LinkRepository(MongoClient mongoClient) {
+    this.mongoClient = mongoClient;
   }
 
-  public List<Link> getAllLinks() {
-    return links;
+  public void findById(String id, Handler<AsyncResult<Link>> handler) {
+    JsonObject query = new JsonObject().put("_id", new ObjectId(id));
+    Future<JsonObject> future = Future.future();
+    mongoClient.findOne("links", query, null, future);
+    future.map(json -> link(json)).setHandler(handler);
   }
 
-  public void saveLink(Link link) {
-    links.add(link);
+  public void getAllLinks(Handler<AsyncResult<List<Link>>> handler) {
+    Future<List<JsonObject>> future = Future.future();
+    mongoClient.find("links", new JsonObject(), future);
+    future.map(list -> list.stream().map(this::link).collect(toList())).setHandler(handler);
+  }
+
+  public void saveLink(Link link, Handler<AsyncResult<Link>> handler) {
+    Future<String> future = Future.future();
+    JsonObject doc = new JsonObject().put("url", link.getUrl()).put("description", link.getDescription());
+    mongoClient.insert("links", doc, future);
+    future.map(id -> link(doc.put("_id", id))).setHandler(handler);
+  }
+
+  private Link link(JsonObject doc) {
+    return new Link(
+      doc.getString("_id"),
+      doc.getString("url"),
+      doc.getString("description"));
   }
 }

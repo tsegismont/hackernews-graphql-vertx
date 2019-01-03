@@ -9,7 +9,10 @@ import graphql.schema.idl.SchemaGenerator;
 import graphql.schema.idl.SchemaParser;
 import graphql.schema.idl.TypeDefinitionRegistry;
 import io.vertx.core.AbstractVerticle;
+import io.vertx.core.AsyncResult;
+import io.vertx.core.Handler;
 import io.vertx.core.json.JsonObject;
+import io.vertx.ext.mongo.MongoClient;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.handler.BodyHandler;
@@ -22,13 +25,15 @@ import static graphql.schema.idl.RuntimeWiring.newRuntimeWiring;
 
 public class Server extends AbstractVerticle {
 
+  private MongoClient mongoClient;
   private LinkRepository linkRepository;
   private GraphQL graphQL;
 
   @Override
   public void start() {
 
-    linkRepository = new LinkRepository();
+    mongoClient = MongoClient.createShared(vertx, new JsonObject());
+    linkRepository = new LinkRepository(mongoClient);
 
     String schema = vertx.fileSystem().readFileBlocking("schema.graphqls").toString();
 
@@ -65,14 +70,13 @@ public class Server extends AbstractVerticle {
   private CompletableFuture<Link> createLink(DataFetchingEnvironment env) {
     CompletableFuture<Link> cf = new CompletableFuture<>();
     Link link = new Link(env.getArgument("url"), env.getArgument("description"));
-    linkRepository.saveLink(link);
-    cf.complete(link);
+    linkRepository.saveLink(link, toHandler(cf));
     return cf;
   }
 
   private CompletableFuture<List<Link>> getAllLinks(DataFetchingEnvironment env) {
     CompletableFuture<List<Link>> cf = new CompletableFuture<>();
-    cf.complete(linkRepository.getAllLinks());
+    linkRepository.getAllLinks(toHandler(cf));
     return cf;
   }
 
@@ -96,5 +100,15 @@ public class Server extends AbstractVerticle {
           rc.fail(throwable);
         }
       });
+  }
+
+  private <T> Handler<AsyncResult<T>> toHandler(CompletableFuture<T> cf) {
+    return ar -> {
+      if (ar.succeeded()) {
+        cf.complete(ar.result());
+      } else {
+        cf.completeExceptionally(ar.cause());
+      }
+    };
   }
 }
