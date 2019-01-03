@@ -2,8 +2,8 @@ package com.howtographql;
 
 import graphql.ExecutionInput;
 import graphql.GraphQL;
+import graphql.schema.DataFetchingEnvironment;
 import graphql.schema.GraphQLSchema;
-import graphql.schema.StaticDataFetcher;
 import graphql.schema.idl.RuntimeWiring;
 import graphql.schema.idl.SchemaGenerator;
 import graphql.schema.idl.SchemaParser;
@@ -15,24 +15,28 @@ import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.handler.BodyHandler;
 import io.vertx.ext.web.handler.StaticHandler;
 
-import java.util.Map;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
 import static graphql.schema.idl.RuntimeWiring.newRuntimeWiring;
 
 public class Server extends AbstractVerticle {
 
+  private LinkRepository linkRepository;
   private GraphQL graphQL;
 
   @Override
   public void start() {
 
-    String schema = "type Query{hello: String}";
+    linkRepository = new LinkRepository();
+
+    String schema = vertx.fileSystem().readFileBlocking("schema.graphqls").toString();
 
     SchemaParser schemaParser = new SchemaParser();
     TypeDefinitionRegistry typeDefinitionRegistry = schemaParser.parse(schema);
 
     RuntimeWiring runtimeWiring = newRuntimeWiring()
-      .type("Query", builder -> builder.dataFetcher("hello", new StaticDataFetcher("world")))
+      .type("Query", builder -> builder.dataFetcher("allLinks", this::getAllLinks))
       .build();
 
     SchemaGenerator schemaGenerator = new SchemaGenerator();
@@ -57,11 +61,25 @@ public class Server extends AbstractVerticle {
       });
   }
 
+  private CompletableFuture<List<Link>> getAllLinks(DataFetchingEnvironment env) {
+    CompletableFuture<List<Link>> cf = new CompletableFuture<>();
+    cf.complete(linkRepository.getAllLinks());
+    return cf;
+  }
+
   private void handleGraphQL(RoutingContext rc) {
+    ExecutionInput.Builder builder = ExecutionInput.newExecutionInput();
+
     JsonObject body = new JsonObject(rc.getBody());
     String query = body.getString("query");
-    Map<String, Object> variables = body.getJsonObject("variables").getMap();
-    graphQL.executeAsync(ExecutionInput.newExecutionInput().query(query).variables(variables).build())
+    builder.query(query);
+
+    JsonObject variables = body.getJsonObject("variables");
+    if (variables != null) {
+      builder.variables(variables.getMap());
+    }
+
+    graphQL.executeAsync(builder.build())
       .whenComplete((executionResult, throwable) -> {
         if (throwable == null) {
           rc.response().end(new JsonObject(executionResult.toSpecification()).toBuffer());
