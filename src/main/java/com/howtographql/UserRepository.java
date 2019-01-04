@@ -3,8 +3,13 @@ package com.howtographql;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
+import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.mongo.MongoClient;
+
+import java.util.List;
+
+import static java.util.stream.Collectors.toList;
 
 public class UserRepository {
 
@@ -47,5 +52,13 @@ public class UserRepository {
       doc.getString("name"),
       doc.getString("email"),
       doc.getString("password"));
+  }
+
+  public void findByIds(List<String> keys, Handler<AsyncResult<List<User>>> handler) {
+    JsonObject query = new JsonObject()
+      .put("_id", new JsonObject().put("$in", new JsonArray(keys)));
+    Future<List<JsonObject>> future = Future.future();
+    mongoClient.find("users", query, future);
+    future.map(docs -> docs.stream().map(doc -> user(doc)).collect(toList())).setHandler(handler);
   }
 }

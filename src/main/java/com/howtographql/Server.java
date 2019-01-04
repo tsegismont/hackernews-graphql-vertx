@@ -3,6 +3,8 @@ package com.howtographql;
 import graphql.ExecutionInput;
 import graphql.GraphQL;
 import graphql.GraphQLException;
+import graphql.execution.instrumentation.dataloader.DataLoaderDispatcherInstrumentation;
+import graphql.execution.instrumentation.dataloader.DataLoaderDispatcherInstrumentationOptions;
 import graphql.schema.DataFetchingEnvironment;
 import graphql.schema.GraphQLSchema;
 import graphql.schema.idl.RuntimeWiring;
@@ -10,15 +12,15 @@ import graphql.schema.idl.SchemaGenerator;
 import graphql.schema.idl.SchemaParser;
 import graphql.schema.idl.TypeDefinitionRegistry;
 import io.vertx.core.AbstractVerticle;
-import io.vertx.core.AsyncResult;
 import io.vertx.core.Future;
-import io.vertx.core.Handler;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.mongo.MongoClient;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.handler.BodyHandler;
 import io.vertx.ext.web.handler.StaticHandler;
+import org.dataloader.DataLoader;
+import org.dataloader.DataLoaderRegistry;
 
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -27,12 +29,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
+import static com.howtographql.Utils.toHandler;
 import static graphql.schema.idl.RuntimeWiring.newRuntimeWiring;
 
 public class Server extends AbstractVerticle {
 
   private LinkRepository linkRepository;
   private UserRepository userRepository;
+  private UserBatchLoader userBatchLoader;
   private VoteRepository voteRepository;
   private GraphQL graphQL;
 
@@ -42,6 +46,7 @@ public class Server extends AbstractVerticle {
     MongoClient mongoClient = MongoClient.createShared(vertx, new JsonObject());
     linkRepository = new LinkRepository(mongoClient);
     userRepository = new UserRepository(mongoClient);
+    userBatchLoader = new UserBatchLoader(userRepository);
     voteRepository = new VoteRepository(mongoClient);
 
     String schema = vertx.fileSystem().readFileBlocking("schema.graphqls").toString();
@@ -68,7 +73,14 @@ public class Server extends AbstractVerticle {
     SchemaGenerator schemaGenerator = new SchemaGenerator();
     GraphQLSchema graphQLSchema = schemaGenerator.makeExecutableSchema(typeDefinitionRegistry, runtimeWiring);
 
+    DataLoaderDispatcherInstrumentationOptions options = DataLoaderDispatcherInstrumentationOptions
+      .newOptions().includeStatistics(true);
+
+    DataLoaderDispatcherInstrumentation dispatcherInstrumentation
+      = new DataLoaderDispatcherInstrumentation(options);
+
     graphQL = GraphQL.newGraphQL(graphQLSchema)
+      .instrumentation(dispatcherInstrumentation)
       .build();
 
     Router router = Router.router(vertx);
@@ -120,15 +132,9 @@ public class Server extends AbstractVerticle {
   }
 
   private CompletableFuture<User> getLinkPostedBy(DataFetchingEnvironment env) {
-    CompletableFuture<User> cf = new CompletableFuture<>();
     Link link = env.getSource();
     String userId = link.getUserId();
-    if (userId == null) {
-      cf.complete(null);
-    } else {
-      userRepository.findById(userId, toHandler(cf));
-    }
-    return cf;
+    return userId == null ? CompletableFuture.completedFuture(null) : env.<String, User>getDataLoader("user").load(userId);
   }
 
   private CompletableFuture<SigninPayload> signinUser(DataFetchingEnvironment env) {
@@ -198,6 +204,11 @@ public class Server extends AbstractVerticle {
           builder.variables(variables.getMap());
         }
 
+        DataLoader<String, User> characterDataLoader = DataLoader.newDataLoader(userBatchLoader);
+        DataLoaderRegistry registry = new DataLoaderRegistry();
+        registry.register("user", characterDataLoader);
+        builder.dataLoaderRegistry(registry);
+
         graphQL.executeAsync(builder.build())
           .whenComplete((executionResult, throwable) -> {
             if (throwable == null) {
@@ -210,15 +221,5 @@ public class Server extends AbstractVerticle {
         rc.fail(ar.cause());
       }
     });
-  }
-
-  private <T> Handler<AsyncResult<T>> toHandler(CompletableFuture<T> cf) {
-    return ar -> {
-      if (ar.succeeded()) {
-        cf.complete(ar.result());
-      } else {
-        cf.completeExceptionally(ar.cause());
-      }
-    };
   }
 }
