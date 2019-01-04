@@ -4,6 +4,7 @@ import io.vertx.core.AsyncResult;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.json.JsonObject;
+import io.vertx.ext.mongo.FindOptions;
 import io.vertx.ext.mongo.MongoClient;
 
 import java.util.List;
@@ -25,9 +26,9 @@ public class LinkRepository {
     future.map(json -> link(json)).setHandler(handler);
   }
 
-  public void getAllLinks(LinkFilter filter, Handler<AsyncResult<List<Link>>> handler) {
+  public void getAllLinks(LinkFilter filter, int skip, int first, Handler<AsyncResult<List<Link>>> handler) {
     Future<List<JsonObject>> future = Future.future();
-    mongoClient.find("links", buildFilter(filter), future);
+    mongoClient.findWithOptions("links", buildFilter(filter), new FindOptions().setSkip(skip).setLimit(first), future);
     future.map(list -> list.stream().map(this::link).collect(toList())).setHandler(handler);
   }
 
