@@ -5,7 +5,6 @@ import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.mongo.MongoClient;
-import org.bson.types.ObjectId;
 
 import java.util.List;
 
@@ -20,7 +19,7 @@ public class LinkRepository {
   }
 
   public void findById(String id, Handler<AsyncResult<Link>> handler) {
-    JsonObject query = new JsonObject().put("_id", new ObjectId(id));
+    JsonObject query = new JsonObject().put("_id", id);
     Future<JsonObject> future = Future.future();
     mongoClient.findOne("links", query, null, future);
     future.map(json -> link(json)).setHandler(handler);

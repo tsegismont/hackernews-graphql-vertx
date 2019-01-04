@@ -20,6 +20,9 @@ import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.handler.BodyHandler;
 import io.vertx.ext.web.handler.StaticHandler;
 
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -30,6 +33,7 @@ public class Server extends AbstractVerticle {
 
   private LinkRepository linkRepository;
   private UserRepository userRepository;
+  private VoteRepository voteRepository;
   private GraphQL graphQL;
 
   @Override
@@ -38,6 +42,7 @@ public class Server extends AbstractVerticle {
     MongoClient mongoClient = MongoClient.createShared(vertx, new JsonObject());
     linkRepository = new LinkRepository(mongoClient);
     userRepository = new UserRepository(mongoClient);
+    voteRepository = new VoteRepository(mongoClient);
 
     String schema = vertx.fileSystem().readFileBlocking("schema.graphqls").toString();
 
@@ -45,13 +50,19 @@ public class Server extends AbstractVerticle {
     TypeDefinitionRegistry typeDefinitionRegistry = schemaParser.parse(schema);
 
     RuntimeWiring runtimeWiring = newRuntimeWiring()
+      .scalar(Scalars.dateTime)
       .type("Query", builder -> builder.dataFetcher("allLinks", this::getAllLinks))
       .type("Mutation", builder -> {
         return builder.dataFetcher("createLink", this::createLink)
           .dataFetcher("createUser", this::createUser)
-          .dataFetcher("signinUser", this::signinUser);
+          .dataFetcher("signinUser", this::signinUser)
+          .dataFetcher("createVote", this::createVote);
       })
       .type("Link", builder -> builder.dataFetcher("postedBy", this::getLinkPostedBy))
+      .type("Vote", builder -> {
+        return builder.dataFetcher("user", this::getVoteOwner)
+          .dataFetcher("link", this::getVoteSubject);
+      })
       .build();
 
     SchemaGenerator schemaGenerator = new SchemaGenerator();
@@ -76,11 +87,43 @@ public class Server extends AbstractVerticle {
       });
   }
 
+  private CompletableFuture<User> getVoteOwner(DataFetchingEnvironment env) {
+    CompletableFuture<User> cf = new CompletableFuture<>();
+    Vote vote = env.getSource();
+    String userId = vote.getUserId();
+    if (userId == null) {
+      cf.complete(null);
+    } else {
+      userRepository.findById(userId, toHandler(cf));
+    }
+    return cf;
+  }
+
+  private CompletableFuture<Link> getVoteSubject(DataFetchingEnvironment env) {
+    CompletableFuture<Link> cf = new CompletableFuture<>();
+    Vote vote = env.getSource();
+    String linkId = vote.getLinkId();
+    if (linkId == null) {
+      cf.complete(null);
+    } else {
+      linkRepository.findById(linkId, toHandler(cf));
+    }
+    return cf;
+  }
+
+  private CompletableFuture<Vote> createVote(DataFetchingEnvironment env) {
+    CompletableFuture<Vote> cf = new CompletableFuture<>();
+    ZonedDateTime now = Instant.now().atZone(ZoneOffset.UTC);
+    Vote vote = new Vote(now, env.getArgument("userId"), env.getArgument("linkId"));
+    voteRepository.saveVote(vote, toHandler(cf));
+    return cf;
+  }
+
   private CompletableFuture<User> getLinkPostedBy(DataFetchingEnvironment env) {
     CompletableFuture<User> cf = new CompletableFuture<>();
     Link link = env.getSource();
     String userId = link.getUserId();
-    if (link == null || userId == null) {
+    if (userId == null) {
       cf.complete(null);
     } else {
       userRepository.findById(userId, toHandler(cf));
