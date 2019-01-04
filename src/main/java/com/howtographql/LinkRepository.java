@@ -34,7 +34,7 @@ public class LinkRepository {
 
   public void saveLink(Link link, Handler<AsyncResult<Link>> handler) {
     Future<String> future = Future.future();
-    JsonObject doc = new JsonObject().put("url", link.getUrl()).put("description", link.getDescription());
+    JsonObject doc = new JsonObject().put("url", link.getUrl()).put("description", link.getDescription()).put("postedBy", link.getUserId());
     mongoClient.insert("links", doc, future);
     future.map(id -> link(doc.put("_id", id))).setHandler(handler);
   }
@@ -43,6 +43,7 @@ public class LinkRepository {
     return new Link(
       doc.getString("_id"),
       doc.getString("url"),
-      doc.getString("description"));
+      doc.getString("description"),
+      doc.getString("postedBy"));
   }
 }

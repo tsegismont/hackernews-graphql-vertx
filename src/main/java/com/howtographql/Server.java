@@ -2,6 +2,7 @@ package com.howtographql;
 
 import graphql.ExecutionInput;
 import graphql.GraphQL;
+import graphql.GraphQLException;
 import graphql.schema.DataFetchingEnvironment;
 import graphql.schema.GraphQLSchema;
 import graphql.schema.idl.RuntimeWiring;
@@ -10,6 +11,7 @@ import graphql.schema.idl.SchemaParser;
 import graphql.schema.idl.TypeDefinitionRegistry;
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.AsyncResult;
+import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.mongo.MongoClient;
@@ -19,13 +21,13 @@ import io.vertx.ext.web.handler.BodyHandler;
 import io.vertx.ext.web.handler.StaticHandler;
 
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 import static graphql.schema.idl.RuntimeWiring.newRuntimeWiring;
 
 public class Server extends AbstractVerticle {
 
-  private MongoClient mongoClient;
   private LinkRepository linkRepository;
   private UserRepository userRepository;
   private GraphQL graphQL;
@@ -33,7 +35,7 @@ public class Server extends AbstractVerticle {
   @Override
   public void start() {
 
-    mongoClient = MongoClient.createShared(vertx, new JsonObject());
+    MongoClient mongoClient = MongoClient.createShared(vertx, new JsonObject());
     linkRepository = new LinkRepository(mongoClient);
     userRepository = new UserRepository(mongoClient);
 
@@ -46,8 +48,10 @@ public class Server extends AbstractVerticle {
       .type("Query", builder -> builder.dataFetcher("allLinks", this::getAllLinks))
       .type("Mutation", builder -> {
         return builder.dataFetcher("createLink", this::createLink)
-          .dataFetcher("createUser", this::createUser);
+          .dataFetcher("createUser", this::createUser)
+          .dataFetcher("signinUser", this::signinUser);
       })
+      .type("Link", builder -> builder.dataFetcher("postedBy", this::getLinkPostedBy))
       .build();
 
     SchemaGenerator schemaGenerator = new SchemaGenerator();
@@ -72,16 +76,45 @@ public class Server extends AbstractVerticle {
       });
   }
 
+  private CompletableFuture<User> getLinkPostedBy(DataFetchingEnvironment env) {
+    CompletableFuture<User> cf = new CompletableFuture<>();
+    Link link = env.getSource();
+    String userId = link.getUserId();
+    if (link == null || userId == null) {
+      cf.complete(null);
+    } else {
+      userRepository.findById(userId, toHandler(cf));
+    }
+    return cf;
+  }
+
+  private CompletableFuture<SigninPayload> signinUser(DataFetchingEnvironment env) {
+    CompletableFuture<SigninPayload> cf = new CompletableFuture<>();
+    AuthData auth = new JsonObject((Map<String, Object>) env.getArgument("auth")).mapTo(AuthData.class);
+    Future<User> future = Future.future();
+    userRepository.findByEmail(auth.getEmail(), future);
+    future.compose(user -> {
+      if (user.getPassword().equals(auth.getPassword())) {
+        return Future.succeededFuture(new SigninPayload(user.getId(), user));
+      }
+      return Future.failedFuture(new GraphQLException("Invalid credentials"));
+    }).setHandler(toHandler(cf));
+    return cf;
+  }
+
   private CompletableFuture<Link> createLink(DataFetchingEnvironment env) {
     CompletableFuture<Link> cf = new CompletableFuture<>();
-    Link link = new Link(env.getArgument("url"), env.getArgument("description"));
+    RoutingContext rc = env.getContext();
+    User user = rc.get("user");
+    Link link = new Link(env.getArgument("url"), env.getArgument("description"), user == null ? null : user.getId());
     linkRepository.saveLink(link, toHandler(cf));
     return cf;
   }
 
   private CompletableFuture<User> createUser(DataFetchingEnvironment env) {
     CompletableFuture<User> cf = new CompletableFuture<>();
-    User user = new User(env.getArgument("name"), env.getArgument("email"), env.getArgument("password"));
+    AuthData auth = new JsonObject((Map<String, Object>) env.getArgument("authProvider")).mapTo(AuthData.class);
+    User user = new User(env.getArgument("name"), auth.getEmail(), auth.getPassword());
     userRepository.saveUser(user, toHandler(cf));
     return cf;
   }
@@ -93,25 +126,45 @@ public class Server extends AbstractVerticle {
   }
 
   private void handleGraphQL(RoutingContext rc) {
-    ExecutionInput.Builder builder = ExecutionInput.newExecutionInput();
+    String authorization = rc.request().getHeader("Authorization");
+    String token = authorization == null ? null : authorization.replace("Bearer ", "");
 
-    JsonObject body = new JsonObject(rc.getBody());
-    String query = body.getString("query");
-    builder.query(query);
-
-    JsonObject variables = body.getJsonObject("variables");
-    if (variables != null) {
-      builder.variables(variables.getMap());
+    Future<User> future = Future.future();
+    if (token == null) {
+      future.complete();
+    } else {
+      userRepository.findById(token, future);
     }
 
-    graphQL.executeAsync(builder.build())
-      .whenComplete((executionResult, throwable) -> {
-        if (throwable == null) {
-          rc.response().end(new JsonObject(executionResult.toSpecification()).toBuffer());
-        } else {
-          rc.fail(throwable);
+    future.setHandler(ar -> {
+      if (ar.succeeded()) {
+
+        rc.put("user", ar.result());
+
+        ExecutionInput.Builder builder = ExecutionInput.newExecutionInput()
+          .context(rc);
+
+        JsonObject body = new JsonObject(rc.getBody());
+        String query = body.getString("query");
+        builder.query(query);
+
+        JsonObject variables = body.getJsonObject("variables");
+        if (variables != null) {
+          builder.variables(variables.getMap());
         }
-      });
+
+        graphQL.executeAsync(builder.build())
+          .whenComplete((executionResult, throwable) -> {
+            if (throwable == null) {
+              rc.response().end(new JsonObject(executionResult.toSpecification()).toBuffer());
+            } else {
+              rc.fail(throwable);
+            }
+          });
+      } else {
+        rc.fail(ar.cause());
+      }
+    });
   }
 
   private <T> Handler<AsyncResult<T>> toHandler(CompletableFuture<T> cf) {

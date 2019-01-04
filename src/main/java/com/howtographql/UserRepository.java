@@ -5,7 +5,6 @@ import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.mongo.MongoClient;
-import org.bson.types.ObjectId;
 
 public class UserRepository {
 
@@ -23,7 +22,7 @@ public class UserRepository {
   }
 
   public void findById(String id, Handler<AsyncResult<User>> handler) {
-    JsonObject query = new JsonObject().put("_id", new ObjectId(id));
+    JsonObject query = new JsonObject().put("_id", id);
     Future<JsonObject> future = Future.future();
     mongoClient.findOne("users", query, null, future);
     future.map(json -> user(json)).setHandler(handler);
