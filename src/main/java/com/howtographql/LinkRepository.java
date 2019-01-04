@@ -25,10 +25,26 @@ public class LinkRepository {
     future.map(json -> link(json)).setHandler(handler);
   }
 
-  public void getAllLinks(Handler<AsyncResult<List<Link>>> handler) {
+  public void getAllLinks(LinkFilter filter, Handler<AsyncResult<List<Link>>> handler) {
     Future<List<JsonObject>> future = Future.future();
-    mongoClient.find("links", new JsonObject(), future);
+    mongoClient.find("links", buildFilter(filter), future);
     future.map(list -> list.stream().map(this::link).collect(toList())).setHandler(handler);
+  }
+
+  private JsonObject buildFilter(LinkFilter filter) {
+    JsonObject query = new JsonObject();
+    if (filter == null) {
+      return query;
+    }
+    String descriptionPattern = filter.getDescriptionContains();
+    String urlPattern = filter.getUrlContains();
+    if (descriptionPattern != null && !descriptionPattern.isEmpty()) {
+      query.put("description", new JsonObject().put("$regex", ".*" + descriptionPattern + ".*"));
+    }
+    if (urlPattern != null && !urlPattern.isEmpty()) {
+      query.put("url", new JsonObject().put("$regex", ".*" + urlPattern + ".*"));
+    }
+    return query;
   }
 
   public void saveLink(Link link, Handler<AsyncResult<Link>> handler) {

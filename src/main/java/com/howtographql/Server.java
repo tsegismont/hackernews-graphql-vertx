@@ -164,7 +164,9 @@ public class Server extends AbstractVerticle {
 
   private CompletableFuture<List<Link>> getAllLinks(DataFetchingEnvironment env) {
     CompletableFuture<List<Link>> cf = new CompletableFuture<>();
-    linkRepository.getAllLinks(toHandler(cf));
+    Map<String, Object> arg = env.getArgument("filter");
+    LinkFilter filter = arg == null ? null : new JsonObject(arg).mapTo(LinkFilter.class);
+    linkRepository.getAllLinks(filter, toHandler(cf));
     return cf;
   }
 
